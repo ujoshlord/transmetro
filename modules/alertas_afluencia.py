@@ -1,9 +1,12 @@
 """
-Módulo de Monitoreo de Afluencia y Centro de Alertas de Sobrecupo.
+Módulo de Monitoreo de Afluencia y Centro de Alertas en Tiempo Real.
 Requerimiento: R14 (Alerta automática si afluencia >= 150% de la capacidad del bus).
+Monitoreo puro con auto-actualización cada 5 segundos que se detiene ante alertas activas.
 """
+import time
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from db_connection import query_df, query_one, execute_sp
 from components.ui_helpers import render_header, render_rule_badge
 from components.charts import chart_afluencia_alerta
@@ -11,128 +14,165 @@ from auth import has_permission
 
 def render():
     render_header(
-        title="Monitoreo de Afluencia y Alertas de Sobrecupo",
-        subtitle="Detección automática de saturación en estaciones (>=150% capacidad del bus) y despacho de refuerzos",
+        title="Centro de Monitoreo de Afluencia y Alertas en Tiempo Real",
+        subtitle="Monitoreo continuo cada 5 segundos; detección automática de sobrecupo (>=150%) y despacho de apoyo",
         icon="🚨"
     )
-    render_rule_badge("R14", "En el momento en que una estación tiene por lo menos un 50% más de la capacidad de pasajeros del bus (>=150%), se genera una alerta inmediata para que otro bus llegue.")
+    render_rule_badge("R14", "En el momento en que una estación tiene por lo menos un 50% más de la capacidad de pasajeros del bus (>=150%), se genera una alerta inmediata. El monitoreo se detiene al detectar una alerta activa para permitir el despacho de apoyo si existen buses disponibles.")
 
-    tab_alertas, tab_registro, tab_historial = st.tabs([
-        "🚨 Centro de Alertas Activas (R14)",
-        "📊 Registro y Simulación de Afluencia",
+    tab_alertas, tab_historial = st.tabs([
+        "🚨 Centro de Alertas en Vivo (Monitoreo)",
         "📜 Historial de Alertas Atendidas"
     ])
 
-    # --- PESTAÑA 1: CENTRO DE ALERTAS ACTIVAS ---
+    # --- PESTAÑA 1: CENTRO DE ALERTAS EN VIVO ---
     with tab_alertas:
-        st.subheader("Alertas Pendientes de Atención")
+        st.subheader("Monitoreo Operativo en Tiempo Real")
+
+        # Consultar alertas pendientes en la base de datos
         df_alertas = query_df("SELECT * FROM transmetro.vw_alertas_pendientes ORDER BY fecha_hora DESC;")
-        
-        if df_alertas.empty:
-            st.success("✅ **Sin Alertas Activas:** Todas las estaciones operan dentro de los parámetros normales de capacidad.")
+        hay_alertas = not df_alertas.empty
+
+        if not hay_alertas:
+            # Estado normal: auto-actualización cada 5 segundos
+            st.success("✅ **Red en Operación Normal:** Todas las estaciones operan dentro de los parámetros seguros de afluencia.")
+            
+            c_mon1, c_mon2 = st.columns([3, 1])
+            with c_mon1:
+                st.info("🟢 **Monitoreo en vivo activo:** Verificando el estado de la red cada 5 segundos automáticamente...")
+            with c_mon2:
+                if st.button("Actualizar Ahora 🔄", use_container_width=True):
+                    st.rerun()
+
+            # Vista general rápida de afluencia actual en estaciones
+            st.markdown("#### Estado Actual de Pasajeros en Espera por Estación")
+            df_estaciones_afluencia = query_df("""
+                SELECT l.codigo AS linea, e.nombre AS estacion,
+                       le.personas_en_espera,
+                       ROUND(AVG(b.capacidad_maxima))::INT AS capacidad_bus_referencia,
+                       ROUND(1.5 * AVG(b.capacidad_maxima))::INT AS umbral_alerta_150pct,
+                       CASE 
+                           WHEN le.personas_en_espera >= 1.5 * AVG(b.capacidad_maxima) THEN '🚨 SOBRECUPO'
+                           WHEN le.personas_en_espera >= AVG(b.capacidad_maxima) THEN '⚠️ ALTA'
+                           ELSE '🟢 NORMAL'
+                       END AS nivel_congestion
+                  FROM transmetro.linea_estacion le
+                  JOIN transmetro.linea l ON l.linea_id = le.linea_id
+                  JOIN transmetro.estacion e ON e.estacion_id = le.estacion_id
+                  LEFT JOIN transmetro.bus b ON b.linea_id = l.linea_id AND b.estado = 'ACTIVO'
+                 GROUP BY l.codigo, e.nombre, le.personas_en_espera, le.orden
+                 ORDER BY l.codigo, le.orden;
+            """)
+            st.dataframe(df_estaciones_afluencia, use_container_width=True, hide_index=True)
+
+            # Auto-actualización cada 5 segundos (se detendrá automáticamente en cuanto surja una alerta)
+            time.sleep(5)
+            st.rerun()
+
         else:
-            st.error(f"🚨 **{len(df_alertas)} ALERTA(S) DE SATURACIÓN ACTIVA(S)**")
+            # Estado con alerta en curso: SE DETIENE LA AUTO-ACTUALIZACIÓN
+            st.error(f"🚨 **ALERTA CRÍTICA: Se detectaron {len(df_alertas)} estación(es) en estado de sobrecupo (>=150%).**")
+            st.warning("⏸️ **Monitoreo automático detenido:** Hay alertas activas que requieren atención operativa inmediata.")
+
             st.dataframe(
                 df_alertas[['alerta_id', 'linea', 'estacion', 'pasajeros_esperando', 'capacidad_referencia', 'porcentaje_capacidad', 'minutos_sin_atender']],
                 use_container_width=True,
                 hide_index=True
             )
-            
-            # Formulario de atención inmediata de la alerta
+
             st.markdown("---")
-            st.subheader("🚒 Despachar Bus de Refuerzo para Atender Alerta")
-            
+            st.subheader("🚒 Despacho de Apoyo para Mitigar Sobrecupo")
+
             alerta_opts = {
-                f"Alerta #{r['alerta_id']}: Estación {r['estacion']} ({r['linea']}) - {r['pasajeros_esperando']} pasajeros ({r['porcentaje_capacidad']}%)": r
+                f"Alerta #{r['alerta_id']}: Estación {r['estacion']} ({r['linea']}) - {r['pasajeros_esperando']} personas esperando ({r['porcentaje_capacidad']}%)": r
                 for _, r in df_alertas.iterrows()
             }
             sel_alerta_txt = st.selectbox("Seleccione Alerta a resolver:", list(alerta_opts.keys()))
             alerta_sel_row = alerta_opts[sel_alerta_txt]
-            alerta_id = alerta_sel_row['alerta_id']
-            
-            # Mostrar medidor gráfico de la alerta seleccionada
+            alerta_id = int(alerta_sel_row['alerta_id'])
+            linea_alerta = alerta_sel_row['linea']
+
+            # Gráfico de saturación
             chart_afluencia_alerta(
                 int(alerta_sel_row['pasajeros_esperando']),
                 int(alerta_sel_row['capacidad_referencia']),
                 alerta_sel_row['estacion']
             )
 
-            # Buses disponibles en esa línea
-            linea_alerta = alerta_sel_row['linea']
+            # 1. Consultar buses disponibles para enviar apoyo
             buses_disp = query_df("""
                 SELECT b.bus_id, b.numero_unidad, b.capacidad_maxima, p.nombre AS parqueo
                   FROM transmetro.bus b
                   JOIN transmetro.linea l ON l.linea_id = b.linea_id
                   JOIN transmetro.parqueo p ON p.parqueo_id = b.parqueo_id
                  WHERE l.codigo = %s AND b.estado = 'ACTIVO'
+                   AND b.bus_id NOT IN (SELECT bus_id FROM transmetro.recorrido WHERE estado = 'EN_CURSO')
                  ORDER BY b.numero_unidad;
             """, (linea_alerta,))
 
-            if not buses_disp.empty:
-                b_map = {f"Unidad {r['numero_unidad']} (Cap: {r['capacidad_maxima']}) - Ubicada en {r['parqueo']}": r['bus_id'] for _, r in buses_disp.iterrows()}
-                bus_refuerzo_sel = st.selectbox("Seleccione Bus de Refuerzo a Despachar:", list(b_map.keys()))
-                obs = st.text_input("Observación del despacho:", value="Se despacha unidad de refuerzo para mitigar sobrecupo en estación.")
+            # 2. Consultar pilotos disponibles con licencia vigente
+            pilotos_disp = query_df("""
+                SELECT p.piloto_id, p.nombres || ' ' || p.apellidos AS nombre
+                  FROM transmetro.piloto p
+                 WHERE p.activo AND p.vencimiento_licencia >= CURRENT_DATE
+                   AND p.piloto_id NOT IN (SELECT piloto_id FROM transmetro.recorrido WHERE estado = 'EN_CURSO')
+                 ORDER BY p.nombres;
+            """)
 
-                col_b1, col_b2 = st.columns(2)
-                with col_b1:
-                    if st.button("Despachar Refuerzo y Cerrar Alerta 🚌💨", type="primary", disabled=not has_permission("alertas_afluencia", "editar")):
-                        ok, msg, _ = execute_sp("sp_atender_alerta", (alerta_id, b_map[bus_refuerzo_sel], obs))
-                        if ok:
-                            st.success(f"Alerta #{alerta_id} atendida exitosamente con bus {bus_refuerzo_sel}.")
-                            st.rerun()
-                        else:
-                            st.error(f"Error al atender alerta: {msg}")
-                with col_b2:
-                    if st.button("Descartar Alerta", type="secondary", disabled=not has_permission("alertas_afluencia", "editar")):
-                        ok, msg, _ = execute_sp("sp_descartar_alerta", (alerta_id, "Descartada por normalización del flujo."))
-                        if ok:
-                            st.info(f"Alerta #{alerta_id} descartada.")
-                            st.rerun()
-                        else:
-                            st.error(f"Error: {msg}")
+            # Validación estricta: Solo se enviará apoyo si existen buses disponibles
+            if buses_disp.empty:
+                st.error(f"❌ **No es posible enviar apoyo:** No existen buses disponibles en la línea {linea_alerta} en este momento. Todas las unidades asignadas se encuentran en viaje activo.")
+            elif pilotos_disp.empty:
+                st.error("❌ **No es posible enviar apoyo:** No existen pilotos disponibles en turno sin viaje en curso.")
             else:
-                st.warning(f"No hay buses activos asignados a la línea {linea_alerta} para despachar de refuerzo.")
+                st.success(f"🚌 Se encontraron **{len(buses_disp)} bus(es)** y **{len(pilotos_disp)} piloto(s)** disponibles para enviar apoyo.")
 
-    # --- PESTAÑA 2: REGISTRO Y SIMULACIÓN DE AFLUENCIA ---
-    with tab_registro:
-        st.subheader("Registro de Conteo de Pasajeros en Estación")
-        st.markdown(
-            """
-            *Prueba en vivo del requerimiento R14:*
-            Al ingresar un conteo de pasajeros en espera que supere el **150%** de la capacidad del bus
-            (ej. si el bus tiene capacidad de 80, una afluencia de 120 o más),
-            el motor de base de datos **generará de inmediato la alerta** mediante el trigger `trg_afluencia_alerta`.
-            """
-        )
+                with st.container(border=True):
+                    col_ap1, col_ap2 = st.columns(2)
+                    with col_ap1:
+                        b_opts = {f"Unidad {r['numero_unidad']} (Cap: {r['capacidad_maxima']}) - Predio {r['parqueo']}": r['bus_id'] for _, r in buses_disp.iterrows()}
+                        sel_bus_apoyo = st.selectbox("Seleccione Bus de Apoyo a Despachar:", list(b_opts.keys()))
+                        sentido_apoyo = st.selectbox("Sentido del Viaje de Apoyo:", ["IDA", "VUELTA"])
+                    with col_ap2:
+                        p_opts = {r['nombre']: r['piloto_id'] for _, r in pilotos_disp.iterrows()}
+                        sel_piloto_apoyo = st.selectbox("Piloto Designado:", list(p_opts.keys()))
+                        obs = st.text_input("Observación del Despacho:", value=f"Apoyo enviado por saturación en estación {alerta_sel_row['estacion']}")
 
-        with st.form("form_reg_afluencia"):
-            ac1, ac2 = st.columns(2)
-            with ac1:
-                # Estaciones de líneas operativas
-                estaciones_linea = query_df("""
-                    SELECT le.linea_id, le.estacion_id, l.codigo AS linea_codigo, e.nombre AS estacion_nombre
-                      FROM transmetro.linea_estacion le
-                      JOIN transmetro.linea l ON l.linea_id = le.linea_id
-                      JOIN transmetro.estacion e ON e.estacion_id = le.estacion_id
-                     ORDER BY l.codigo, le.orden;
-                """)
-                est_lin_dict = {f"Línea {r['linea_codigo']} - Estación {r['estacion_nombre']}": (r['linea_id'], r['estacion_id']) for _, r in estaciones_linea.iterrows()}
-                sel_el = st.selectbox("Estación y Línea:", list(est_lin_dict.keys()))
-                
-            with ac2:
-                pasajeros_in = st.number_input("Cantidad de Pasajeros en Espera:", min_value=0, max_value=1000, value=125, step=5)
-            
-            sub_afl = st.form_submit_button("Registrar Conteo de Pasajeros", type="primary")
-            if sub_afl:
-                l_id, e_id = est_lin_dict[sel_el]
-                ok, msg, _ = execute_sp("sp_registrar_afluencia", (e_id, l_id, int(pasajeros_in)))
-                if ok:
-                    st.success(f"Afluencia registrada ({pasajeros_in} personas). El sistema evaluó automáticamente el umbral de sobrecupo.")
-                    st.rerun()
-                else:
-                    st.error(f"Error al registrar afluencia: {msg}")
+                    if st.button("🚨 Enviar Apoyo Inmediato 🚌💨", type="primary", use_container_width=True, disabled=not has_permission("alertas_afluencia", "editar")):
+                        bus_id_target = b_opts[sel_bus_apoyo]
+                        piloto_id_target = p_opts[sel_piloto_apoyo]
 
-    # --- PESTAÑA 3: HISTORIAL DE ALERTAS ---
+                        try:
+                            # 1. Iniciar el nuevo recorrido (se refleja inmediatamente en los viajes)
+                            execute_sp("sp_iniciar_recorrido", (
+                                bus_id_target,
+                                piloto_id_target,
+                                sentido_apoyo,
+                                datetime.now()
+                            ))
+
+                            # Obtener el ID del nuevo recorrido generado
+                            res_rec = query_one("""
+                                SELECT recorrido_id FROM transmetro.recorrido
+                                 WHERE bus_id = %s AND estado = 'EN_CURSO';
+                            """, (bus_id_target,))
+                            nuevo_rec_id = res_rec['recorrido_id'] if res_rec else "N/A"
+
+                            # 2. Atender y cerrar la alerta vinculándola al bus despachado
+                            execute_sp("sp_atender_alerta", (
+                                alerta_id,
+                                bus_id_target,
+                                f"Apoyo despachado exitosamente en Viaje #{nuevo_rec_id} ({obs})"
+                            ))
+
+                            st.success(f"🎉 **¡Apoyo enviado exitosamente!** Se despachó el bus **{sel_bus_apoyo}** con el **Viaje #{nuevo_rec_id}**. Este nuevo recorrido ya se encuentra en tránsito y está reflejado en el módulo de Recorridos y Operación.")
+                            time.sleep(2)
+                            st.rerun()
+
+                        except Exception as ex:
+                            st.error(f"Error al despachar apoyo: {ex}")
+
+    # --- PESTAÑA 2: HISTORIAL DE ALERTAS ATENDIDAS ---
     with tab_historial:
         st.subheader("Historial de Alertas Atendidas y Descartadas")
         df_hist_alertas = query_df("""
