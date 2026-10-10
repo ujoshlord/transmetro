@@ -1,8 +1,3 @@
-"""
-Módulo de Monitoreo de Afluencia y Centro de Alertas en Tiempo Real.
-Requerimiento: R14 (Alerta automática si afluencia >= 150% de la capacidad del bus).
-Monitoreo puro con auto-actualización cada 5 segundos que se detiene ante alertas activas.
-"""
 import time
 import streamlit as st
 import pandas as pd
@@ -14,32 +9,32 @@ from auth import has_permission
 
 def render():
     render_header(
-        title="Centro de Monitoreo de Afluencia y Alertas en Tiempo Real",
-        subtitle="Monitoreo continuo cada 5 segundos; detección automática de sobrecupo (>=150%) y despacho de apoyo",
+        title="Centro de Monitoreo de Afluencia y Alertas",
+        subtitle="Detección de sobrecupo (>=150%) y despacho de apoyo operativo",
         icon="🚨"
     )
-    render_rule_badge("R14", "En el momento en que una estación tiene por lo menos un 50% más de la capacidad de pasajeros del bus (>=150%), se genera una alerta inmediata. El monitoreo se detiene al detectar una alerta activa para permitir el despacho de apoyo si existen buses disponibles.")
+    render_rule_badge("R14", "En el momento en que una estación tiene por lo menos un 50% más de la capacidad de pasajeros del bus (>=150%), se genera una alerta inmediata requiriendo atención operativa para permitir el despacho de apoyo si existen buses disponibles.")
 
     tab_alertas, tab_historial = st.tabs([
-        "🚨 Centro de Alertas en Vivo (Monitoreo)",
+        "🚨 Centro de Alertas (Monitoreo)",
         "📜 Historial de Alertas Atendidas"
     ])
 
     # --- PESTAÑA 1: CENTRO DE ALERTAS EN VIVO ---
     with tab_alertas:
-        st.subheader("Monitoreo Operativo en Tiempo Real")
+        st.subheader("Estado Operativo Actual")
 
         # Consultar alertas pendientes en la base de datos
         df_alertas = query_df("SELECT * FROM transmetro.vw_alertas_pendientes ORDER BY fecha_hora DESC;")
         hay_alertas = not df_alertas.empty
 
         if not hay_alertas:
-            # Estado normal: auto-actualización cada 5 segundos
+            # Estado normal sin alertas
             st.success("✅ **Red en Operación Normal:** Todas las estaciones operan dentro de los parámetros seguros de afluencia.")
             
             c_mon1, c_mon2 = st.columns([3, 1])
             with c_mon1:
-                st.info("🟢 **Monitoreo en vivo activo:** Verificando el estado de la red cada 5 segundos automáticamente...")
+                st.info("🟢 **Monitoreo de red:** Presione 'Actualizar Ahora' para consultar los datos más recientes de afluencia.")
             with c_mon2:
                 if st.button("Actualizar Ahora 🔄", use_container_width=True):
                     st.rerun()
@@ -65,14 +60,10 @@ def render():
             """)
             st.dataframe(df_estaciones_afluencia, use_container_width=True, hide_index=True)
 
-            # Auto-actualización cada 5 segundos (se detendrá automáticamente en cuanto surja una alerta)
-            time.sleep(5)
-            st.rerun()
-
         else:
-            # Estado con alerta en curso: SE DETIENE LA AUTO-ACTUALIZACIÓN
+            # Estado con alerta en curso
             st.error(f"🚨 **ALERTA CRÍTICA: Se detectaron {len(df_alertas)} estación(es) en estado de sobrecupo (>=150%).**")
-            st.warning("⏸️ **Monitoreo automático detenido:** Hay alertas activas que requieren atención operativa inmediata.")
+            st.warning("⚠️ Hay alertas activas que requieren atención operativa inmediata.")
 
             st.dataframe(
                 df_alertas[['alerta_id', 'linea', 'estacion', 'pasajeros_esperando', 'capacidad_referencia', 'porcentaje_capacidad', 'minutos_sin_atender']],
@@ -99,7 +90,7 @@ def render():
                 alerta_sel_row['estacion']
             )
 
-            # 1. Consultar buses disponibles para enviar apoyo
+            # Consultar buses disponibles
             buses_disp = query_df("""
                 SELECT b.bus_id, b.numero_unidad, b.capacidad_maxima, p.nombre AS parqueo
                   FROM transmetro.bus b
@@ -110,7 +101,7 @@ def render():
                  ORDER BY b.numero_unidad;
             """, (linea_alerta,))
 
-            # 2. Consultar pilotos disponibles con licencia vigente
+            # Consultar pilotos disponibles
             pilotos_disp = query_df("""
                 SELECT p.piloto_id, p.nombres || ' ' || p.apellidos AS nombre
                   FROM transmetro.piloto p
@@ -119,7 +110,6 @@ def render():
                  ORDER BY p.nombres;
             """)
 
-            # Validación estricta: Solo se enviará apoyo si existen buses disponibles
             if buses_disp.empty:
                 st.error(f"❌ **No es posible enviar apoyo:** No existen buses disponibles en la línea {linea_alerta} en este momento. Todas las unidades asignadas se encuentran en viaje activo.")
             elif pilotos_disp.empty:
@@ -143,30 +133,14 @@ def render():
                         piloto_id_target = p_opts[sel_piloto_apoyo]
 
                         try:
-                            # 1. Iniciar el nuevo recorrido (se refleja inmediatamente en los viajes)
-                            execute_sp("sp_iniciar_recorrido", (
-                                bus_id_target,
-                                piloto_id_target,
-                                sentido_apoyo,
-                                datetime.now()
-                            ))
-
-                            # Obtener el ID del nuevo recorrido generado
-                            res_rec = query_one("""
-                                SELECT recorrido_id FROM transmetro.recorrido
-                                 WHERE bus_id = %s AND estado = 'EN_CURSO';
-                            """, (bus_id_target,))
+                            execute_sp("sp_iniciar_recorrido", (bus_id_target, piloto_id_target, sentido_apoyo, datetime.now()))
+                            res_rec = query_one("SELECT recorrido_id FROM transmetro.recorrido WHERE bus_id = %s AND estado = 'EN_CURSO';", (bus_id_target,))
                             nuevo_rec_id = res_rec['recorrido_id'] if res_rec else "N/A"
 
-                            # 2. Atender y cerrar la alerta vinculándola al bus despachado
-                            execute_sp("sp_atender_alerta", (
-                                alerta_id,
-                                bus_id_target,
-                                f"Apoyo despachado exitosamente en Viaje #{nuevo_rec_id} ({obs})"
-                            ))
+                            execute_sp("sp_atender_alerta", (alerta_id, bus_id_target, f"Apoyo despachado exitosamente en Viaje #{nuevo_rec_id} ({obs})"))
 
-                            st.success(f"🎉 **¡Apoyo enviado exitosamente!** Se despachó el bus **{sel_bus_apoyo}** con el **Viaje #{nuevo_rec_id}**. Este nuevo recorrido ya se encuentra en tránsito y está reflejado en el módulo de Recorridos y Operación.")
-                            time.sleep(2)
+                            st.success(f"🎉 **¡Apoyo enviado exitosamente!** Se despachó el bus **{sel_bus_apoyo}** con el **Viaje #{nuevo_rec_id}**.")
+                            time.sleep(2)  # Pausa breve solo para que el usuario lea el mensaje de éxito antes de limpiar la pantalla
                             st.rerun()
 
                         except Exception as ex:
@@ -186,4 +160,8 @@ def render():
              WHERE a.estado <> 'PENDIENTE'
              ORDER BY a.fecha_hora DESC;
         """)
+        
+        if st.button("Actualizar Historial 🔄", key="btn_actualizar_historial"):
+            st.rerun()
+            
         st.dataframe(df_hist_alertas, use_container_width=True, hide_index=True)
