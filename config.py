@@ -1,29 +1,25 @@
-"""
-Configuración central de la aplicación Transmetro Streamlit.
-Carga las variables de entorno desde .env y expone parámetros del sistema.
-"""
-import os
 from pathlib import Path
-from dotenv import load_dotenv
+import tomllib
 
-# Cargar variables de entorno desde el archivo .env en la raíz del proyecto
 BASE_DIR = Path(__file__).resolve().parent
-ENV_PATH = BASE_DIR / ".env"
-load_dotenv(dotenv_path=ENV_PATH)
+TOML_PATH = BASE_DIR / ".toml" 
 
-# Base de datos
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
+with open(TOML_PATH, "rb") as f:
+    config = tomllib.load(f)
+
+DATABASE_URL = config.get("database", {}).get(
+    "url",
     "postgresql://postgres.bygdirqnzcyvhdcnjege:TKCVsRDPbYHyGXpK@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 )
 
-# Seguridad y sesión
-SECRET_KEY = os.getenv("SECRET_KEY", "transmetro-default-secret-key-2026")
-APP_NAME = os.getenv("APP_NAME", "Transmetro GT - Sistema de Gestión Operativa")
-DEFAULT_PAGE_TITLE = os.getenv("DEFAULT_PAGE_TITLE", "Transmetro Guatemala")
-DEFAULT_PAGE_ICON = os.getenv("DEFAULT_PAGE_ICON", "🚌")
+security_config = config.get("security", {})
+app_config = config.get("app", {})
 
-# Constantes de negocio
+SECRET_KEY = security_config.get("secret_key", "transmetro-default-secret-key-2026")
+APP_NAME = app_config.get("name", "Transmetro GT - Sistema de Gestión Operativa")
+DEFAULT_PAGE_TITLE = app_config.get("default_page_title", "Transmetro Guatemala")
+DEFAULT_PAGE_ICON = app_config.get("default_page_icon", "🚌")
+
 DEFAULT_LATITUDE = 14.634915
 DEFAULT_LONGITUDE = -90.506882
 DEFAULT_ZOOM = 12
