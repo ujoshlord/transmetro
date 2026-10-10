@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimalist Transmetro Animation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bus-green: #10b981;
+            --bus-dark: #1e293b;
+            --bus-wheel: #0f172a;
+            --window-color: #e2e8f0;
+            --road-color: #ffffff;
+            --road-line: #ffffff;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            background: #f1f5f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .scene {
+            position: relative;
+            width: 100%;
+            max-width: 700px;
+            height: 250px;
+            background: linear-gradient(to bottom, #e2e8f0, #cbd5e1);
+            border-radius: 20px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .road {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 110px;
+            background-color: var(--road-color);
+        }
+
+        .road-stripes {
+            position: absolute;
+            top: 25px;
+            left: 0;
+            width: 200%;
+            height: 6px;
+            background: repeating-linear-gradient(
+                90deg,
+                #94a3b8,
+                #94a3b8 40px,
+                transparent 40px,
+                transparent 80px
+            );
+            animation: scrollRoad 0.8s linear infinite;
+        }
+
+        @keyframes scrollRoad {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-80px); }
+        }
+
+        .bus-travel-wrapper {
+            position: absolute;
+            bottom: 44px;
+            left: 0;
+            z-index: 10;
+            animation: travelAcross 7s linear infinite;
+        }
+
+        @keyframes travelAcross {
+            0% {
+                transform: translateX(-440px);
+            }
+            100% {
+                transform: translateX(740px);
+            }
+        }
+
+        .bus-container {
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            animation: dynamicSuspension 0.6s ease-in-out infinite;
+        }
+
+        @keyframes dynamicSuspension {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            30% { transform: translateY(-4px) rotate(-0.3deg); }
+            50% { transform: translateY(1px) rotate(0.2deg); }
+            70% { transform: translateY(-2px) rotate(-0.1deg); }
+        }
+
+        .carriage-rear {
+            position: relative;
+            width: 210px;
+            height: 90px;
+            background-color: var(--bus-green);
+            border-radius: 16px 0 0 10px;
+            display: flex;
+            align-items: center;
+            box-shadow: inset 0 -8px 0 rgba(0,0,0,0.15);
+        }
+
+        .windows-row {
+            display: flex;
+            gap: 6px;
+            width: calc(100% - 24px);
+            height: 42px;
+            position: absolute;
+            top: 12px;
+            left: 12px;
+        }
+
+        .window {
+            flex: 1;
+            background-color: var(--window-color);
+            border-radius: 4px;
+        }
+
+        .taillight {
+            position: absolute;
+            bottom: 12px;
+            left: 4px;
+            width: 4px;
+            height: 14px;
+            background-color: #ef4444;
+            border-radius: 2px;
+        }
+
+        .articulation {
+            width: 24px;
+            height: 82px;
+            background-color: var(--bus-dark);
+            z-index: 2;
+            border-left: 2px solid rgba(255,255,255,0.1);
+            border-right: 2px solid rgba(255,255,255,0.1);
+        }
+
+        .carriage-front {
+            position: relative;
+            width: 190px;
+            height: 90px;
+            background-color: var(--bus-green);
+            border-radius: 0 32px 10px 0;
+            display: flex;
+            align-items: center;
+            box-shadow: inset 0 -8px 0 rgba(0,0,0,0.15);
+        }
+
+        .carriage-front .windows-row {
+            width: calc(100% - 44px);
+            left: 10px;
+        }
+
+        .windshield {
+            position: absolute;
+            top: 12px;
+            right: 8px;
+            width: 30px;
+            height: 42px;
+            background-color: var(--window-color);
+            border-radius: 0 24px 4px 4px;
+        }
+
+        .headlight {
+            position: absolute;
+            bottom: 12px;
+            right: 4px;
+            width: 4px;
+            height: 14px;
+            background-color: #facc15;
+            border-radius: 2px;
+        }
+
+        .wheel {
+            position: absolute;
+            bottom: -16px;
+            width: 34px;
+            height: 34px;
+            background-color: var(--bus-wheel);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            z-index: 5;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .wheel-rear { left: 35px; }
+        .wheel-middle { left: 15px; }
+        .wheel-front { right: 30px; }
+
+        .wheel-rim {
+            width: 8px;
+            height: 8px;
+            background-color: #f8fafc;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="scene">
+        <!-- Transmetro Travel Wrapper for Horizontal Motion -->
+        <div class="bus-travel-wrapper">
+            <!-- Bus Suspension Container -->
+            <div class="bus-container">
+                <!-- Rear carriage -->
+                <div class="carriage-rear">
+                    <div class="taillight"></div>
+                    <div class="windows-row">
+                        <div class="window"></div>
+                        <div class="window"></div>
+                        <div class="window"></div>
+                        <div class="window"></div>
+                    </div>
+                    <div class="wheel wheel-rear">
+                        <div class="wheel-rim"></div>
+                    </div>
+                </div>
+
+                <!-- Articulation joint -->
+                <div class="articulation"></div>
+
+                <!-- Front carriage -->
+                <div class="carriage-front">
+                    <div class="windows-row">
+                        <div class="window"></div>
+                        <div class="window"></div>
+                        <div class="window"></div>
+                    </div>
+                    <div class="windshield"></div>
+                    <div class="headlight"></div>
+                    <div class="wheel wheel-middle">
+                        <div class="wheel-rim"></div>
+                    </div>
+                    <div class="wheel wheel-front">
+                        <div class="wheel-rim"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Road Surface -->
+        <div class="road">
+            <div class="road-stripes"></div>
+        </div>
+    </div>
+</body>
+</html>
