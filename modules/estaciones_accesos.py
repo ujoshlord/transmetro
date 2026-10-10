@@ -4,7 +4,7 @@ Requerimientos: R2, R3, R8, R10, R11.
 """
 import streamlit as st
 import pandas as pd
-from db_connection import query_df, execute_stmt, get_connection
+from db_connection import query_df, execute_stmt, execute_sp, get_connection
 from components.ui_helpers import render_header, render_rule_badge
 from auth import has_permission
 
@@ -88,34 +88,83 @@ def render():
         else:
             st.warning("Esta estación no tiene accesos registrados.")
 
-        # Formulario para agregar un acceso a esta estación (R3)
+        # Formulario para agregar un acceso a esta estación (R3, R10)
         if has_permission("estaciones_accesos", "crear"):
-            with st.expander("➕ Agregar Nuevo Acceso a esta Estación (R3)"):
-                with st.form("form_nuevo_acceso"):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        cod_acc = st.text_input("Código del Acceso:", placeholder="Ej. A-E02-4")
-                        nom_acc = st.text_input("Nombre / Descripción:", placeholder="Ej. Acceso Calle Roosevelt Poniente")
-                        tipo_acc = st.selectbox("Tipo de Acceso:", ["PEATONAL", "RAMPA", "ESCALERA", "ELEVADOR", "PASARELA"])
-                    with c2:
-                        ubi_acc = st.text_input("Ubicación exacta:", placeholder="Ej. Esquina 6ta avenida")
-                        hora_ap = st.time_input("Horario Apertura:", value=pd.to_datetime("04:30").time())
-                        hora_ci = st.time_input("Horario Cierre:", value=pd.to_datetime("22:00").time())
-                    
-                    sub_acc = st.form_submit_button("Guardar Acceso")
-                    if sub_acc:
-                        if not cod_acc or not nom_acc:
-                            st.error("Código y nombre son obligatorios.")
-                        else:
-                            ok, msg, _ = execute_stmt("""
-                                INSERT INTO transmetro.acceso (codigo, estacion_id, nombre, tipo, ubicacion, horario_apertura, horario_cierre)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s);
-                            """, (cod_acc.strip().upper(), sel_est_id, nom_acc.strip(), tipo_acc, ubi_acc.strip(), hora_ap, hora_ci))
-                            if ok:
-                                st.success("Acceso creado exitosamente. Recuerde asignarle al menos un guardia (R10).")
-                                st.rerun()
+            with st.expander("➕ Agregar Nuevo Acceso a esta Estación (R3, R10)"):
+                st.caption("ℹ️ **Regla R10:** Todo acceso debe contar con al menos un guardia de seguridad asignado.")
+
+                # Consultar guardias activos y su disponibilidad por turno
+                df_guardias = query_df("""
+                    SELECT g.guardia_id, g.dpi, g.nombres || ' ' || g.apellidos AS nombre, g.empresa,
+                           COUNT(ag.asignacion_id) FILTER (WHERE ag.fecha_fin IS NULL) AS asig_activas,
+                           COALESCE(STRING_AGG(ag.turno, ', ') FILTER (WHERE ag.fecha_fin IS NULL), 'Ninguno') AS turnos_ocupados
+                      FROM transmetro.guardia g
+                      LEFT JOIN transmetro.asignacion_guardia ag ON ag.guardia_id = g.guardia_id
+                     WHERE g.activo
+                     GROUP BY g.guardia_id, g.dpi, g.nombres, g.apellidos, g.empresa
+                     ORDER BY asig_activas ASC, g.nombres ASC;
+                """)
+
+                if df_guardias.empty:
+                    st.error("⚠️ No existen guardias de seguridad activos en la base de datos. Debe registrar un guardia antes de crear accesos.")
+                else:
+                    solo_libres = st.checkbox("Mostrar únicamente guardias sin ningún turno activo", value=False, key="chk_solo_libres_acc")
+                    df_guardias_mostrar = df_guardias[df_guardias['asig_activas'] == 0] if solo_libres else df_guardias
+
+                    if df_guardias_mostrar.empty:
+                        st.warning("No hay guardias 100% libres en este momento. Desmarque la casilla para asignar un guardia a un turno distinto al que ya tiene ocupado.")
+                    else:
+                        guardia_map = {}
+                        for _, r in df_guardias_mostrar.iterrows():
+                            if r['asig_activas'] == 0:
+                                label = f"🟢 {r['nombre']} (DPI: {r['dpi']}) — Totalmente Libre — {r['empresa']}"
                             else:
-                                st.error(f"Error al crear acceso: {msg}")
+                                label = f"🟡 {r['nombre']} (DPI: {r['dpi']}) — Turno(s) Ocupado(s): {r['turnos_ocupados']} — {r['empresa']}"
+                            guardia_map[label] = {
+                                'id': int(r['guardia_id']),
+                                'nombre': r['nombre'],
+                                'turnos': [t.strip().upper() for t in r['turnos_ocupados'].split(',')] if r['turnos_ocupados'] != 'Ninguno' else []
+                            }
+
+                        with st.form("form_nuevo_acceso"):
+                            st.markdown("##### 📍 Datos del Acceso (R3)")
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                cod_acc = st.text_input("Código del Acceso:", placeholder="Ej. A-E02-4")
+                                nom_acc = st.text_input("Nombre / Descripción:", placeholder="Ej. Acceso Calle Roosevelt Poniente")
+                                tipo_acc = st.selectbox("Tipo de Acceso:", ["PEATONAL", "RAMPA", "ESCALERA", "ELEVADOR", "PASARELA"])
+                            with c2:
+                                ubi_acc = st.text_input("Ubicación exacta:", placeholder="Ej. Esquina 6ta avenida")
+                                hora_ap = st.time_input("Horario Apertura:", value=pd.to_datetime("04:30").time())
+                                hora_ci = st.time_input("Horario Cierre:", value=pd.to_datetime("22:00").time())
+
+                            st.markdown("##### 👮 Asignación de Guardia Obligatoria (R10)")
+                            g_c1, g_c2, g_c3 = st.columns([2, 1, 1])
+                            with g_c1:
+                                sel_guardia_label = st.selectbox("Guardia Disponible:", list(guardia_map.keys()))
+                            with g_c2:
+                                turno_acc = st.selectbox("Turno de Asignación:", ["MATUTINO", "VESPERTINO", "NOCTURNO"])
+                            with g_c3:
+                                fecha_inicio = st.date_input("Fecha Inicio:", value=pd.to_datetime("today").date())
+
+                            sub_acc = st.form_submit_button("Guardar Acceso y Asignar Guardia", type="primary")
+                            if sub_acc:
+                                if not cod_acc or not nom_acc:
+                                    st.error("Código y nombre son obligatorios.")
+                                else:
+                                    g_info = guardia_map[sel_guardia_label]
+                                    if turno_acc in g_info['turnos']:
+                                        st.error(f"❌ El guardia {g_info['nombre']} ya tiene un turno activo en '{turno_acc}'. Seleccione otro turno u otro guardia disponible.")
+                                    else:
+                                        ok, msg, _ = execute_sp(
+                                            "sp_crear_acceso_con_guardia",
+                                            (cod_acc.strip().upper(), sel_est_id, nom_acc.strip(), tipo_acc, ubi_acc.strip(), hora_ap, hora_ci, g_info['id'], turno_acc, fecha_inicio)
+                                        )
+                                        if ok:
+                                            st.success(f"✅ Acceso '{cod_acc.strip().upper()}' y asignación del guardia '{g_info['nombre']}' ({turno_acc}) registrados exitosamente.")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Error al registrar acceso y guardia: {msg}")
 
     # --- PESTAÑA 4: REGISTRAR NUEVA ESTACIÓN (R2, R11) ---
     with tab4:
