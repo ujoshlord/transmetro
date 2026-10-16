@@ -7,7 +7,7 @@ import logging
 import psycopg2
 from psycopg2 import pool, extras
 import pandas as pd
-from config import DATABASE_URL
+from configfile import DATABASE_URL
 
 logger = logging.getLogger("transmetro.db")
 
