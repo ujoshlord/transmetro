@@ -3,7 +3,7 @@ Aplicación Principal Streamlit - Sistema Integral de Gestión Transmetro GT.
 Controla el flujo de autenticación, autorización por módulos y navegación principal.
 """
 import streamlit as st
-from config import DEFAULT_PAGE_TITLE, DEFAULT_PAGE_ICON
+from configfile import DEFAULT_PAGE_TITLE, DEFAULT_PAGE_ICON
 from components.ui_helpers import apply_custom_css
 from auth import init_auth_state, is_authenticated, render_login_page, logout, get_current_user, has_permission
 
