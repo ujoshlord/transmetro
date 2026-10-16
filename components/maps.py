@@ -5,7 +5,7 @@ Dibuja las líneas de ruta, estaciones, conexiones y parqueos.
 import pydeck as pdk
 import pandas as pd
 import streamlit as st
-from config import DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_ZOOM
+from configfile import DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_ZOOM
 from db_connection import query_df
 
 def hex_to_rgb(hex_color):
